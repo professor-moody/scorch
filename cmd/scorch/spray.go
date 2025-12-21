@@ -10,8 +10,6 @@ import (
 	"strings"
 	"sync"
 	"time"
-
-	"scorch-tools/internal/auth"
 )
 
 type SprayResult struct {
@@ -200,24 +198,31 @@ func tryAuth(ctx context.Context, opts *CommonOpts, username, password string) S
 		Password: password,
 	}
 
+	transport := &http.Transport{
+		TLSClientConfig: &tls.Config{InsecureSkipVerify: opts.SkipVerify},
+	}
+
 	var client *http.Client
 
 	// Use NTLM authentication when domain is specified
 	if opts.Domain != "" {
-		creds := &auth.Credentials{
-			Username: username,
-			Password: password,
+		ntlmAuth := &NTLMAuth{
 			Domain:   opts.Domain,
-			Method:   auth.AuthNTLM,
+			User:     username,
+			Password: password,
 		}
-		client = auth.NewAuthenticatedClient(creds, opts.SkipVerify, opts.Timeout)
+		client = &http.Client{
+			Timeout: opts.Timeout,
+			Transport: &NTLMHashTransport{
+				Transport: transport,
+				Auth:      ntlmAuth,
+			},
+		}
 	} else {
 		// Fall back to Basic auth for non-domain scenarios
 		client = &http.Client{
-			Timeout: opts.Timeout,
-			Transport: &http.Transport{
-				TLSClientConfig: &tls.Config{InsecureSkipVerify: opts.SkipVerify},
-			},
+			Timeout:   opts.Timeout,
+			Transport: transport,
 		}
 	}
 

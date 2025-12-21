@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"net/http"
 	"os"
-	"strings"
 
 	"github.com/jcmturner/gokrb5/v8/client"
 	"github.com/jcmturner/gokrb5/v8/config"
@@ -178,43 +177,4 @@ func (k *KerberosClient) Close() {
 	if k.client != nil {
 		k.client.Destroy()
 	}
-}
-
-// doKerberosAuthImpl performs Kerberos authentication (called from ntlm.go)
-func (t *AuthenticatedTransport) doKerberosAuthImpl(req *http.Request) (*http.Response, error) {
-	// Build Kerberos config from credentials
-	cfg := &KerberosConfig{
-		Username: t.Credentials.Username,
-		Password: t.Credentials.Password,
-		Realm:    strings.ToUpper(t.Credentials.Domain),
-	}
-
-	// Check for ccache in environment
-	if ccache := os.Getenv("KRB5CCNAME"); ccache != "" {
-		cfg.CCache = strings.TrimPrefix(ccache, "FILE:")
-	}
-
-	// Check for ticket in credentials
-	if t.Credentials.TicketPath != "" {
-		cfg.CCache = t.Credentials.TicketPath
-	}
-
-	kerbClient, err := NewKerberosClient(cfg)
-	if err != nil {
-		return nil, fmt.Errorf("Kerberos initialization failed: %w", err)
-	}
-	defer kerbClient.Close()
-
-	// Get SPNEGO token
-	host := req.URL.Hostname()
-	token, err := kerbClient.GetSPNEGOToken(host)
-	if err != nil {
-		return nil, err
-	}
-
-	// Clone request and add auth header
-	authReq := cloneRequest(req)
-	authReq.Header.Set("Authorization", "Negotiate "+token)
-
-	return t.Transport.RoundTrip(authReq)
 }

@@ -305,7 +305,7 @@ func debugf(opts *CommonOpts, format string, args ...interface{}) {
 
 // createContext creates a context with timeout
 func createContext(opts *CommonOpts) (context.Context, context.CancelFunc) {
-	return context.WithTimeout(context.Background(), opts.Timeout*10)
+	return context.WithTimeout(context.Background(), opts.Timeout)
 }
 
 // containsHelp checks if args contain help flag
