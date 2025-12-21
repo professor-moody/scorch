@@ -445,7 +445,7 @@ SCORCH uses SQL Server native encryption:
 
 - [Fox-IT Orchestrator Decryption](https://github.com/fox-it/Decrypt-OrchestratorSecretVariables)
 - [Microsoft SCORCH Documentation](https://learn.microsoft.com/en-us/system-center/orchestrator/)
-- [SpecterOps NTLM Relay Research](https://posts.specterops.io/the-renaissance-of-ntlm-relay-attacks)
+- [SpecterOps SCOM Research](https://specterops.io/blog/2025/12/10/scommand-and-conquer-attacking-system-center-operations-manager-part-1/)
 
 ## Disclaimer
 
