@@ -15,19 +15,20 @@ import (
 
 // KerberosConfig holds Kerberos authentication configuration
 type KerberosConfig struct {
-	Realm       string
-	KDCAddress  string
-	Username    string
-	Password    string
-	Keytab      string // Path to keytab file
-	CCache      string // Path to credential cache file
-	SPN         string // Service Principal Name for target service
+	Realm      string
+	KDCAddress string
+	Username   string
+	Password   string
+	Keytab     string // Path to keytab file
+	CCache     string // Path to credential cache file
+	SPN        string // Service Principal Name for target service
 }
 
 // KerberosClient wraps gokrb5 client for HTTP authentication
 type KerberosClient struct {
 	client    *client.Client
 	spnPrefix string
+	transport http.RoundTripper
 }
 
 // NewKerberosClient creates a new Kerberos client
@@ -74,7 +75,15 @@ func NewKerberosClient(cfg *KerberosConfig) (*KerberosClient, error) {
 	return &KerberosClient{
 		client:    cl,
 		spnPrefix: "HTTP",
+		transport: http.DefaultTransport,
 	}, nil
+}
+
+// SetTransport sets a custom transport for the Kerberos client
+func (k *KerberosClient) SetTransport(t http.RoundTripper) {
+	if t != nil {
+		k.transport = t
+	}
 }
 
 // loadKrb5Config loads Kerberos configuration
@@ -135,10 +144,6 @@ func (k *KerberosClient) GetSPNEGOToken(targetHost string) (string, error) {
 		return "", fmt.Errorf("failed to get service ticket for %s: %w", spn, err)
 	}
 
-	// Create SPNEGO token
-	spnegoClient := spnego.SPNEGOClient(k.client, spn)
-	_ = spnegoClient // Avoid unused variable
-
 	// Build the AP-REQ
 	apreq, err := spnego.NewKRB5TokenAPREQ(k.client, ticket, key, []int{}, []int{})
 	if err != nil {
@@ -168,8 +173,8 @@ func (k *KerberosClient) RoundTrip(req *http.Request) (*http.Response, error) {
 	// Set Authorization header
 	req.Header.Set("Authorization", "Negotiate "+token)
 
-	// Use default transport
-	return http.DefaultTransport.RoundTrip(req)
+	// Use configured transport
+	return k.transport.RoundTrip(req)
 }
 
 // Close cleans up Kerberos resources

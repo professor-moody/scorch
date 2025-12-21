@@ -277,7 +277,9 @@ func (a *NTLMAuth) BuildAuthenticateMessage(challenge *ChallengeMessage) ([]byte
 
 	// Generate client challenge (8 random bytes)
 	clientChallenge := make([]byte, 8)
-	rand.Read(clientChallenge)
+	if _, err := rand.Read(clientChallenge); err != nil {
+		return nil, fmt.Errorf("failed to generate client challenge: %w", err)
+	}
 
 	// Get current time as Windows FILETIME
 	timestamp := getFileTime()

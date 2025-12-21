@@ -8,7 +8,7 @@ import (
 	"io"
 	"strings"
 
-	_ "github.com/denisenkom/go-mssqldb"
+	_ "github.com/microsoft/go-mssqldb"
 )
 
 // connectionConfig represents common fields in SCORCH IP connection XML
@@ -118,12 +118,11 @@ func runDump(args []string) error {
 	result := &DumpResult{}
 
 	// Get database info
-	info, err := getDatabaseInfo(ctx, db)
-	if err != nil {
-		debugf(opts, "Error getting db info: %v", err)
-	} else {
-		result.Info = info
+	info, errs := getDatabaseInfo(ctx, db)
+	for _, err := range errs {
+		debugf(opts, "DB info: %v", err)
 	}
+	result.Info = info
 
 	if infoOnly {
 		if opts.JSON {
@@ -201,54 +200,69 @@ func maskConnString(s string) string {
 	return s
 }
 
-func getDatabaseInfo(ctx context.Context, db *sql.DB) (*DatabaseInfo, error) {
+func getDatabaseInfo(ctx context.Context, db *sql.DB) (*DatabaseInfo, []error) {
 	info := &DatabaseInfo{}
+	var errs []error
 
 	// Get server name and version
 	row := db.QueryRowContext(ctx, "SELECT @@SERVERNAME, @@VERSION")
 	var version string
-	row.Scan(&info.Server, &version)
+	if err := row.Scan(&info.Server, &version); err != nil {
+		errs = append(errs, fmt.Errorf("server info: %w", err))
+	}
 	if len(version) > 100 {
 		version = version[:100]
 	}
 	info.Version = version
 
 	// Get database name
-	db.QueryRowContext(ctx, "SELECT DB_NAME()").Scan(&info.Database)
+	if err := db.QueryRowContext(ctx, "SELECT DB_NAME()").Scan(&info.Database); err != nil {
+		errs = append(errs, fmt.Errorf("database name: %w", err))
+	}
 
 	// Check if encryption keys exist
 	var keyCount int
-	db.QueryRowContext(ctx, `
+	if err := db.QueryRowContext(ctx, `
 		SELECT COUNT(*) FROM sys.symmetric_keys 
 		WHERE name = 'ORCHESTRATOR_SYM_KEY'
-	`).Scan(&keyCount)
+	`).Scan(&keyCount); err != nil {
+		errs = append(errs, fmt.Errorf("encryption key check: %w", err))
+	}
 	info.EncryptionEnabled = keyCount > 0
 
 	// Count variables
-	db.QueryRowContext(ctx, `
+	if err := db.QueryRowContext(ctx, `
 		SELECT COUNT(*) FROM dbo.VARIABLES v 
 		INNER JOIN dbo.OBJECTS o ON o.UniqueID = v.UniqueID 
 		WHERE o.Deleted = 0
-	`).Scan(&info.TotalVariables)
+	`).Scan(&info.TotalVariables); err != nil {
+		errs = append(errs, fmt.Errorf("variable count: %w", err))
+	}
 
 	// Count encrypted variables
-	db.QueryRowContext(ctx, `
+	if err := db.QueryRowContext(ctx, `
 		SELECT COUNT(*) FROM dbo.VARIABLES v 
 		INNER JOIN dbo.OBJECTS o ON o.UniqueID = v.UniqueID 
 		WHERE o.Deleted = 0 AND v.Value LIKE '%~De/%'
-	`).Scan(&info.EncryptedVariables)
+	`).Scan(&info.EncryptedVariables); err != nil {
+		errs = append(errs, fmt.Errorf("encrypted variable count: %w", err))
+	}
 
 	// Count runbooks
-	db.QueryRowContext(ctx, `
+	if err := db.QueryRowContext(ctx, `
 		SELECT COUNT(*) FROM dbo.POLICIES WHERE Deleted = 0
-	`).Scan(&info.TotalRunbooks)
+	`).Scan(&info.TotalRunbooks); err != nil {
+		errs = append(errs, fmt.Errorf("runbook count: %w", err))
+	}
 
 	// Count connections
-	db.QueryRowContext(ctx, `
+	if err := db.QueryRowContext(ctx, `
 		SELECT COUNT(*) FROM dbo.CONNECTIONS WHERE Deleted = 0
-	`).Scan(&info.TotalConnections)
+	`).Scan(&info.TotalConnections); err != nil {
+		errs = append(errs, fmt.Errorf("connection count: %w", err))
+	}
 
-	return info, nil
+	return info, errs
 }
 
 func extractVariables(ctx context.Context, db *sql.DB, decrypt bool) ([]Variable, error) {
@@ -362,6 +376,33 @@ func extractHexFromEncrypted(value string) string {
 	}
 
 	return value[start : start+end]
+}
+
+// decryptDPAPI attempts to decrypt DPAPI-protected data from local Runbook Designer config.
+// This is a placeholder for future implementation of local credential extraction.
+//
+// DPAPI blobs from Runbook Designer are stored in:
+//   - %LOCALAPPDATA%\Microsoft\System Center 2012\Orchestrator\Runbook Designer\*.dat
+//   - Registry: HKCU\Software\Microsoft\System Center\2012\Orchestrator\Connections
+//
+// Implementation would require:
+//   - Windows CryptUnprotectData API via syscall or cgo
+//   - Running as the user who encrypted the data (or with their master key)
+//   - Alternatively, offline decryption with domain backup key (DVCP/BCKUPKEY)
+//
+// For now, use the SQL Server symmetric key decryption in decryptVariables() for
+// credentials stored in the Orchestrator database.
+func decryptDPAPI(encryptedData []byte) ([]byte, error) {
+	// TODO: Implement Windows DPAPI decryption
+	// This would require platform-specific code:
+	//
+	// On Windows:
+	//   var outBlob windows.DataBlob
+	//   err := windows.CryptUnprotectData(&inBlob, nil, nil, 0, nil, 0, &outBlob)
+	//
+	// Cross-platform (offline with master key):
+	//   Use dpapick library or implement DPAPI blob parsing
+	return nil, fmt.Errorf("DPAPI decryption not implemented - use -decrypt flag for SQL Server decryption")
 }
 
 func extractConnections(ctx context.Context, db *sql.DB, decrypt bool) ([]Connection, error) {

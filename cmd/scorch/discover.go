@@ -245,7 +245,6 @@ func scanPort(ctx context.Context, host string, port int, service string, timeou
 	if err != nil {
 		return nil
 	}
-	defer conn.Close()
 
 	result := &PortResult{
 		Port:    port,
@@ -253,20 +252,14 @@ func scanPort(ctx context.Context, host string, port int, service string, timeou
 		State:   "open",
 	}
 
-	// Try to grab banner
-	conn.SetReadDeadline(time.Now().Add(2 * time.Second))
-	banner := make([]byte, 256)
-	n, err := conn.Read(banner)
-	if err == nil && n > 0 {
-		result.Banner = strings.TrimSpace(string(banner[:n]))
-	}
-
-	// Check for TLS on common HTTPS ports
+	// Check for TLS on common HTTPS ports by upgrading the existing connection
 	if port == 443 || port == 636 || port == 5986 {
-		tlsConn, err := tls.DialWithDialer(dialer, "tcp", address, &tls.Config{
+		tlsConn := tls.Client(conn, &tls.Config{
 			InsecureSkipVerify: true,
+			ServerName:         host,
 		})
-		if err == nil {
+		tlsConn.SetDeadline(time.Now().Add(2 * time.Second))
+		if err := tlsConn.Handshake(); err == nil {
 			state := tlsConn.ConnectionState()
 			switch state.Version {
 			case tls.VersionTLS10:
@@ -278,9 +271,19 @@ func scanPort(ctx context.Context, host string, port int, service string, timeou
 			case tls.VersionTLS13:
 				result.TLSVersion = "TLS 1.3"
 			}
-			tlsConn.Close()
 		}
+		tlsConn.Close()
+		return result
 	}
+
+	// For non-TLS ports, try to grab banner
+	conn.SetReadDeadline(time.Now().Add(2 * time.Second))
+	banner := make([]byte, 256)
+	n, err := conn.Read(banner)
+	if err == nil && n > 0 {
+		result.Banner = strings.TrimSpace(string(banner[:n]))
+	}
+	conn.Close()
 
 	return result
 }

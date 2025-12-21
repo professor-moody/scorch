@@ -10,7 +10,7 @@ import (
 	"time"
 )
 
-var version = "1.0.0"
+var version = "2.0.0"
 
 func main() {
 	if len(os.Args) < 2 {
@@ -324,7 +324,9 @@ func parseFlag(args []string, flags ...string) (string, []string) {
 		for _, f := range flags {
 			if args[i] == f && i+1 < len(args) {
 				val := args[i+1]
-				newArgs := append(args[:i], args[i+2:]...)
+				newArgs := make([]string, 0, len(args)-2)
+				newArgs = append(newArgs, args[:i]...)
+				newArgs = append(newArgs, args[i+2:]...)
 				return val, newArgs
 			}
 		}
