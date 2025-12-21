@@ -308,23 +308,17 @@ func connectLDAP(opts *CommonOpts, ldapServer string) (*ldap.Conn, error) {
 			// Already FQDN
 			domainFQDN = opts.Domain
 		} else {
-			// NetBIOS name - try to derive FQDN from ldapServer
-			// e.g., if ldapServer is "dc01.corp.local", use "corp.local"
+			// NetBIOS name - use full ldapServer FQDN if available
+			// Can't reliably derive FQDN from NetBIOS without DNS lookups
 			if strings.Contains(ldapServer, ".") {
-				parts := strings.SplitN(ldapServer, ".", 2)
-				if len(parts) == 2 {
-					domainFQDN = parts[1]
-				}
-			}
-			// If we still don't have FQDN, use NetBIOS as-is (may not work)
-			if domainFQDN == "" {
+				domainFQDN = ldapServer
+			} else {
 				domainFQDN = opts.Domain
 			}
 		}
 	} else if strings.Contains(ldapServer, ".") {
 		// No domain specified, but server is FQDN
 		// Use the full server name as domain - common when targeting a DC directly
-		// e.g., "scorch.ludus.domain" -> domain is "scorch.ludus.domain"
 		domainFQDN = ldapServer
 	}
 
