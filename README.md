@@ -1,6 +1,6 @@
-# SCORCH-Tools
+# SCORCH
 
-Offensive security toolkit for Microsoft System Center Orchestrator (SCORCH) - designed to work from non-domain joined Linux systems.
+Offensive security toolkit for Microsoft System Center Orchestrator (SCORCH). Single binary, cross-platform, works from non-domain joined systems.
 
 ## Overview
 
@@ -18,38 +18,18 @@ System Center Orchestrator stores credentials for numerous enterprise systems (A
 
 ```bash
 # Clone and build
-git clone https://github.com/yourrepo/scorch-tools
-cd scorch-tools
+git clone https://github.com/professor-moody/scorch.git
+cd scorch
 go build -o scorch ./cmd/scorch/
 
 # Cross-compile for Windows
 GOOS=windows GOARCH=amd64 go build -o scorch.exe ./cmd/scorch/
+
+# Cross-compile for Linux
+GOOS=linux GOARCH=amd64 go build -o scorch ./cmd/scorch/
 ```
 
-## Project Structure
-
-```
-scorch-tools/
-├── cmd/scorch/           # Unified CLI (recommended)
-│   ├── main.go           # Entry point with all commands
-│   ├── enum.go           # Enumeration command
-│   ├── assess.go         # Security assessment
-│   ├── exec.go           # Runbook execution
-│   ├── dump.go           # SQL credential extraction
-│   ├── spray.go          # Password spraying
-│   ├── discover.go       # Network/LDAP/SPN discovery
-│   ├── client.go         # HTTP client with NTLM
-│   └── ntlm.go           # NTLM transport
-├── internal/auth/        # Cross-platform NTLM + Kerberos + PTH
-│   ├── ntlm.go           # NTLM authentication
-│   └── kerberos.go       # Kerberos/SPNEGO authentication
-├── pkg/api/              # Reusable API client library
-├── pkg/db/               # Database extraction library
-├── pkg/security/         # Security scanner library
-└── cmd/scorch-*/         # Legacy standalone tools (deprecated)
-```
-
-**Note:** The `cmd/scorch-*` standalone modules are deprecated. Use the unified `cmd/scorch/` CLI which combines all functionality into a single binary.
+The result is a single static binary with no external dependencies.
 
 ## Quick Start
 
