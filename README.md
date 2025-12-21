@@ -14,6 +14,24 @@ System Center Orchestrator stores credentials for numerous enterprise systems (A
 - **Network Discovery** - Port scanning, LDAP enumeration, SPN discovery
 - **Cross-Platform Auth** - NTLM, Pass-the-Hash, Kerberos, Basic auth from any OS
 
+## Architecture
+
+![SCORCH Architecture](orch_architecturediagram.png)
+
+System Center Orchestrator consists of several components that present different attack surfaces:
+
+| Component | Purpose | Default Port |
+|-----------|---------|--------------|
+| **Orchestration Database** | SQL Server storing runbooks, credentials, and encrypted secrets | 1433 |
+| **Management Server** | Central coordination between components | - |
+| **Runbook Server(s)** | Execute runbooks using stored credentials | - |
+| **Web Service** | REST/OData API for remote management | 81 |
+| **Web Console** | Browser-based management UI | 82 |
+
+Credentials stored in the database are encrypted using SQL Server's native encryption (`ORCHESTRATOR_SYM_KEY`). Integration Packs for AD, SCOM, SCCM, VMM, Exchange, and Azure all store their connection credentials here.
+
+**Reference:** [Microsoft SCORCH Architecture Documentation](https://learn.microsoft.com/en-us/system-center/orchestrator/learn-about-orchestrator)
+
 ## Installation
 
 ```bash
