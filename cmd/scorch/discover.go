@@ -45,6 +45,7 @@ type LDAPDiscovery struct {
 type LDAPAccount struct {
 	DN          string   `json:"dn"`
 	SAMAccount  string   `json:"sam_account"`
+	AccountType string   `json:"account_type,omitempty"` // user, gMSA, MSA
 	DisplayName string   `json:"display_name,omitempty"`
 	Description string   `json:"description,omitempty"`
 	SPNs        []string `json:"spns,omitempty"`
@@ -427,8 +428,17 @@ func baseDNToDomain(baseDN string) string {
 
 // searchLDAPUsers searches for SCORCH-related user accounts
 func searchLDAPUsers(conn *ldap.Conn, baseDN string, opts *CommonOpts) ([]LDAPAccount, error) {
-	// Search for accounts with SCORCH-related names or descriptions
-	filter := "(&(objectClass=user)(objectCategory=person)(|(sAMAccountName=*orch*)(sAMAccountName=*scorch*)(sAMAccountName=*runbook*)(description=*orchestrator*)(description=*scorch*)))"
+	// Search for accounts with SCORCH-related names, descriptions, or SPNs
+	// Includes: regular users, service accounts, gMSA, MSA
+	filter := `(&(|(objectClass=user)(objectClass=msDS-ManagedServiceAccount)(objectClass=msDS-GroupManagedServiceAccount))(|` +
+		// Name patterns
+		`(sAMAccountName=*orch*)(sAMAccountName=*scorch*)(sAMAccountName=*runbook*)` +
+		`(sAMAccountName=sco_*)(sAMAccountName=svc_orch*)(sAMAccountName=svc_scorch*)` +
+		// Description patterns
+		`(description=*orchestrator*)(description=*scorch*)(description=*runbook*)` +
+		// SPN patterns (HTTP on ports 81/82)
+		`(servicePrincipalName=HTTP/*:81*)(servicePrincipalName=HTTP/*:82*)` +
+		`))`
 
 	searchRequest := ldap.NewSearchRequest(
 		baseDN,
@@ -436,7 +446,7 @@ func searchLDAPUsers(conn *ldap.Conn, baseDN string, opts *CommonOpts) ([]LDAPAc
 		ldap.NeverDerefAliases,
 		0, 0, false,
 		filter,
-		[]string{"distinguishedName", "sAMAccountName", "displayName", "description", "servicePrincipalName", "memberOf", "whenCreated"},
+		[]string{"distinguishedName", "sAMAccountName", "displayName", "description", "servicePrincipalName", "memberOf", "whenCreated", "objectClass"},
 		nil,
 	)
 
@@ -447,9 +457,23 @@ func searchLDAPUsers(conn *ldap.Conn, baseDN string, opts *CommonOpts) ([]LDAPAc
 
 	var accounts []LDAPAccount
 	for _, entry := range result.Entries {
+		// Determine account type from objectClass
+		accountType := "user"
+		objectClasses := entry.GetAttributeValues("objectClass")
+		for _, oc := range objectClasses {
+			if strings.EqualFold(oc, "msDS-GroupManagedServiceAccount") {
+				accountType = "gMSA"
+				break
+			} else if strings.EqualFold(oc, "msDS-ManagedServiceAccount") {
+				accountType = "MSA"
+				break
+			}
+		}
+
 		acc := LDAPAccount{
 			DN:          entry.DN,
 			SAMAccount:  entry.GetAttributeValue("sAMAccountName"),
+			AccountType: accountType,
 			DisplayName: entry.GetAttributeValue("displayName"),
 			Description: entry.GetAttributeValue("description"),
 			SPNs:        entry.GetAttributeValues("servicePrincipalName"),
@@ -464,7 +488,15 @@ func searchLDAPUsers(conn *ldap.Conn, baseDN string, opts *CommonOpts) ([]LDAPAc
 
 // searchLDAPComputers searches for SCORCH-related computer objects
 func searchLDAPComputers(conn *ldap.Conn, baseDN string, opts *CommonOpts) ([]LDAPComputer, error) {
-	filter := "(&(objectClass=computer)(|(name=*orch*)(name=*scorch*)(description=*orchestrator*)))"
+	// Enhanced filter for computers with SCORCH patterns or relevant SPNs
+	filter := `(&(objectClass=computer)(|` +
+		// Name patterns
+		`(name=*orch*)(name=*scorch*)(name=*runbook*)(name=*sco-*)(name=*sco_*)` +
+		// Description patterns
+		`(description=*orchestrator*)(description=*scorch*)(description=*runbook*)` +
+		// SPN patterns (HTTP on ports 81/82, or MSSQLSvc for DB)
+		`(servicePrincipalName=HTTP/*:81*)(servicePrincipalName=HTTP/*:82*)` +
+		`))`
 
 	searchRequest := ldap.NewSearchRequest(
 		baseDN,
@@ -500,7 +532,16 @@ func searchLDAPComputers(conn *ldap.Conn, baseDN string, opts *CommonOpts) ([]LD
 
 // searchLDAPGroups searches for Orchestrator groups
 func searchLDAPGroups(conn *ldap.Conn, baseDN string, opts *CommonOpts) ([]LDAPGroup, error) {
-	filter := "(&(objectClass=group)(|(name=*Orchestrator*)(name=*SCORCH*)(description=*orchestrator*)))"
+	// Enhanced filter including built-in Orchestrator groups
+	filter := `(&(objectClass=group)(|` +
+		// Built-in Orchestrator groups
+		`(name=OrchestratorSystemGroup)(name=OrchestratorUsersGroup)(name=OrchestratorRemoteConsoleUsers)` +
+		`(name=Orchestrator Users)(name=Orchestrator Admins)(name=Orchestrator Operators)` +
+		// Pattern-based matches
+		`(name=*Orchestrator*)(name=*SCORCH*)(name=*Runbook*)` +
+		// Description patterns
+		`(description=*orchestrator*)(description=*scorch*)(description=*runbook*)` +
+		`))`
 
 	searchRequest := ldap.NewSearchRequest(
 		baseDN,
@@ -655,7 +696,11 @@ func printDiscoveryResults(w io.Writer, result *DiscoveryResult) {
 			fmt.Fprintf(w, "\n[+] Service Accounts (%d)\n", len(ldapRes.ServiceAccounts))
 			fmt.Fprintln(w, strings.Repeat("-", 40))
 			for _, acc := range ldapRes.ServiceAccounts {
-				fmt.Fprintf(w, "  %s\n", acc.SAMAccount)
+				typeLabel := ""
+				if acc.AccountType != "" && acc.AccountType != "user" {
+					typeLabel = fmt.Sprintf(" [%s]", acc.AccountType)
+				}
+				fmt.Fprintf(w, "  %s%s\n", acc.SAMAccount, typeLabel)
 				if acc.Description != "" {
 					fmt.Fprintf(w, "    Description: %s\n", acc.Description)
 				}
@@ -758,9 +803,11 @@ Ports Scanned:
   5985/6 - WinRM
 
 LDAP Searches:
-  - Service accounts: *orch*, *scorch*, *runbook*
-  - Computers: *orch*, *scorch*
-  - Groups: Orchestrator Users, Orchestrator Admins, Orchestrator System Group
+  - Service accounts: *orch*, *scorch*, *runbook*, sco_*, svc_orch*, svc_scorch*
+  - Account types: Users, gMSA, MSA (auto-detected)
+  - Computers: *orch*, *scorch*, *runbook*, *sco-*, *sco_*
+  - Groups: OrchestratorSystemGroup, OrchestratorUsersGroup, Orchestrator Users, etc.
+  - SPN patterns: HTTP/*:81*, HTTP/*:82*
 
 SPN Discovery:
   - HTTP/* SPNs (SCORCH web services)
