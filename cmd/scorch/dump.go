@@ -206,12 +206,17 @@ func buildSQLConnString(opts *CommonOpts, database string) string {
 	params = append(params, fmt.Sprintf("port=%d", opts.Port))
 	params = append(params, fmt.Sprintf("database=%s", database))
 
-	if opts.Username != "" && opts.Password != "" {
+	if opts.Domain != "" && opts.Username != "" && opts.Password != "" {
+		// Windows authentication with domain credentials
+		// Format: DOMAIN\username
+		params = append(params, fmt.Sprintf("user id=%s\\%s", opts.Domain, opts.Username))
+		params = append(params, fmt.Sprintf("password=%s", opts.Password))
+	} else if opts.Username != "" && opts.Password != "" {
 		// SQL Server authentication
 		params = append(params, fmt.Sprintf("user id=%s", opts.Username))
 		params = append(params, fmt.Sprintf("password=%s", opts.Password))
 	} else {
-		// Windows/Trusted authentication
+		// Windows/Trusted authentication (current user)
 		params = append(params, "trusted_connection=yes")
 	}
 
