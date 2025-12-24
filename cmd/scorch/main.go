@@ -52,6 +52,11 @@ func main() {
 			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 			os.Exit(1)
 		}
+	case "parse":
+		if err := runParse(args); err != nil {
+			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+			os.Exit(1)
+		}
 	case "version", "-v", "--version":
 		fmt.Printf("scorch v%s\n", version)
 	case "help", "-h", "--help":
@@ -77,6 +82,7 @@ Commands:
   assess    Security assessment and vulnerability scanning
   exec      Execute runbooks with parameters
   dump      Extract credentials from SCORCH database
+  parse     Parse OIS export files for offline analysis
   spray     Password spray against SCORCH web service
   discover  Network discovery, LDAP enumeration, and SPN discovery
   help      Show this help
