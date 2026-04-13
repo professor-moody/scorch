@@ -221,10 +221,6 @@ func checkTLS(ctx context.Context, opts *CommonOpts, result *AssessmentResult) {
 func checkNTLMRelay(ctx context.Context, opts *CommonOpts, client *http.Client, result *AssessmentResult) {
 	debugf(opts, "Checking NTLM relay attack surface")
 
-	if opts.TLS {
-		return // Relay much harder over HTTPS with proper certs
-	}
-
 	url := opts.BaseURL() + "/Orchestrator2012/Orchestrator.svc/"
 	req, _ := http.NewRequestWithContext(ctx, "GET", url, nil)
 
@@ -236,18 +232,34 @@ func checkNTLMRelay(ctx context.Context, opts *CommonOpts, client *http.Client, 
 
 	authHeader := resp.Header.Get("WWW-Authenticate")
 	if strings.Contains(strings.ToLower(authHeader), "ntlm") {
-		result.Findings = append(result.Findings, Finding{
-			ID:          "SCORCH-RELAY-001",
-			Title:       "NTLM Relay Attack Surface",
-			Severity:    "HIGH",
-			Description: "NTLM over HTTP allows credential relay attacks from MITM position",
-			Evidence:    "NTLM auth over HTTP without EPA",
-			Remediation: "Enable HTTPS with EPA, or switch to Kerberos-only",
-			References: []string{
-				"https://posts.specterops.io/the-renaissance-of-ntlm-relay-attacks",
-				"https://attack.mitre.org/techniques/T1557/001/",
-			},
-		})
+		if opts.TLS {
+			// NTLM relay over HTTPS is still possible without EPA/Channel Binding
+			result.Findings = append(result.Findings, Finding{
+				ID:          "SCORCH-RELAY-002",
+				Title:       "NTLM Over HTTPS Without Verified EPA",
+				Severity:    "MEDIUM",
+				Description: "NTLM authentication is enabled over HTTPS. Relay attacks are possible if Extended Protection for Authentication (EPA/Channel Binding) is not configured on the server. EPA status cannot be verified remotely.",
+				Evidence:    fmt.Sprintf("WWW-Authenticate: %s (over HTTPS)", authHeader),
+				Remediation: "Verify EPA (Channel Binding) is enabled in IIS, or switch to Kerberos-only authentication",
+				References: []string{
+					"https://posts.specterops.io/the-renaissance-of-ntlm-relay-attacks",
+					"https://attack.mitre.org/techniques/T1557/001/",
+				},
+			})
+		} else {
+			result.Findings = append(result.Findings, Finding{
+				ID:          "SCORCH-RELAY-001",
+				Title:       "NTLM Relay Attack Surface",
+				Severity:    "HIGH",
+				Description: "NTLM over HTTP allows credential relay attacks from MITM position",
+				Evidence:    "NTLM auth over HTTP without EPA",
+				Remediation: "Enable HTTPS with EPA, or switch to Kerberos-only",
+				References: []string{
+					"https://posts.specterops.io/the-renaissance-of-ntlm-relay-attacks",
+					"https://attack.mitre.org/techniques/T1557/001/",
+				},
+			})
+		}
 	}
 }
 

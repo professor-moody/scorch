@@ -326,6 +326,48 @@ func (c *HTTPClient) parseODataRunbooks(data []byte) ([]Runbook, error) {
 	return runbooks, nil
 }
 
+// odataProperties provides named access to OData XML property elements.
+type odataProperties []odataProperty
+
+type odataProperty struct {
+	XMLName xml.Name
+	Value   string `xml:",chardata"`
+}
+
+func (p odataProperties) get(name string) string {
+	for _, prop := range p {
+		if prop.XMLName.Local == name {
+			return prop.Value
+		}
+	}
+	return ""
+}
+
+// parseODataEntities is a generic OData XML parser that maps entry properties
+// to domain types via a converter function. This handles the AtomPub feed/entry
+// structure returned by legacy SCORCH (2012/2016).
+func parseODataEntities[T any](data []byte, convert func(odataProperties) T) ([]T, error) {
+	type Entry struct {
+		Content struct {
+			Properties odataProperties `xml:"properties>*"`
+		} `xml:"content"`
+	}
+	type Feed struct {
+		Entries []Entry `xml:"entry"`
+	}
+
+	var feed Feed
+	if err := xml.Unmarshal(data, &feed); err != nil {
+		return nil, fmt.Errorf("failed to parse OData response: %w", err)
+	}
+
+	result := make([]T, len(feed.Entries))
+	for i, e := range feed.Entries {
+		result[i] = convert(e.Content.Properties)
+	}
+	return result, nil
+}
+
 func (c *HTTPClient) GetRunbook(ctx context.Context, id string) (*Runbook, error) {
 	var path string
 	if c.apiVersion == "modern" {
@@ -416,14 +458,26 @@ func (c *HTTPClient) GetRunbookServers(ctx context.Context) ([]RunbookServer, er
 		return nil, fmt.Errorf("HTTP %d", resp.StatusCode)
 	}
 	
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, err
+	}
+
 	var result struct {
 		Value []RunbookServer `json:"value"`
 	}
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return nil, err
+	if err := json.Unmarshal(body, &result); err == nil && len(result.Value) > 0 {
+		return result.Value, nil
 	}
-	
-	return result.Value, nil
+
+	return parseODataEntities(body, func(props odataProperties) RunbookServer {
+		return RunbookServer{
+			ID:          props.get("Id"),
+			Name:        props.get("Name"),
+			MachineName: props.get("MachineName"),
+			Available:   props.get("IsOnline") == "true",
+		}
+	})
 }
 
 func (c *HTTPClient) GetFolders(ctx context.Context) ([]Folder, error) {
@@ -444,14 +498,26 @@ func (c *HTTPClient) GetFolders(ctx context.Context) ([]Folder, error) {
 		return nil, fmt.Errorf("HTTP %d", resp.StatusCode)
 	}
 	
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, err
+	}
+
 	var result struct {
 		Value []Folder `json:"value"`
 	}
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return nil, err
+	if err := json.Unmarshal(body, &result); err == nil && len(result.Value) > 0 {
+		return result.Value, nil
 	}
-	
-	return result.Value, nil
+
+	return parseODataEntities(body, func(props odataProperties) Folder {
+		return Folder{
+			ID:          props.get("Id"),
+			Name:        props.get("Name"),
+			ParentID:    props.get("ParentId"),
+			Description: props.get("Description"),
+		}
+	})
 }
 
 func (c *HTTPClient) GetJobs(ctx context.Context, filter string) ([]Job, error) {
@@ -476,14 +542,27 @@ func (c *HTTPClient) GetJobs(ctx context.Context, filter string) ([]Job, error) 
 		return nil, fmt.Errorf("HTTP %d", resp.StatusCode)
 	}
 
-	var result struct {
-		Value []Job `json:"value"`
-	}
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
 		return nil, err
 	}
 
-	return result.Value, nil
+	var result struct {
+		Value []Job `json:"value"`
+	}
+	if err := json.Unmarshal(body, &result); err == nil && len(result.Value) > 0 {
+		return result.Value, nil
+	}
+
+	return parseODataEntities(body, func(props odataProperties) Job {
+		return Job{
+			ID:        props.get("Id"),
+			RunbookID: props.get("RunbookId"),
+			Status:    props.get("Status"),
+			CreatedBy: props.get("CreatedBy"),
+			CreatedOn: props.get("CreationTime"),
+		}
+	})
 }
 
 // Activity represents a SCORCH activity within a runbook
@@ -545,14 +624,27 @@ func (c *HTTPClient) GetActivities(ctx context.Context) ([]Activity, error) {
 		return nil, fmt.Errorf("HTTP %d", resp.StatusCode)
 	}
 
-	var result struct {
-		Value []Activity `json:"value"`
-	}
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
 		return nil, err
 	}
 
-	return result.Value, nil
+	var result struct {
+		Value []Activity `json:"value"`
+	}
+	if err := json.Unmarshal(body, &result); err == nil && len(result.Value) > 0 {
+		return result.Value, nil
+	}
+
+	return parseODataEntities(body, func(props odataProperties) Activity {
+		return Activity{
+			ID:          props.get("Id"),
+			RunbookID:   props.get("RunbookId"),
+			Name:        props.get("Name"),
+			Type:        props.get("Type"),
+			Description: props.get("Description"),
+		}
+	})
 }
 
 // GetRunbookActivities returns activities for a specific runbook
