@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"encoding/xml"
 	"fmt"
 	"io"
 	"net/http"
@@ -174,13 +175,19 @@ func createJob(ctx context.Context, client *HTTPClient, opts *CommonOpts, runboo
 	return &job, nil
 }
 
+func xmlEscape(s string) string {
+	var buf bytes.Buffer
+	xml.EscapeText(&buf, []byte(s))
+	return buf.String()
+}
+
 func buildAtomPubJobRequest(runbookID string, params map[string]string) []byte {
 	// Build parameter XML
 	var paramXML string
 	if len(params) > 0 {
 		paramXML = "<Data>"
 		for name, value := range params {
-			paramXML += fmt.Sprintf("<Parameter><Name>%s</Name><Value>%s</Value></Parameter>", name, value)
+			paramXML += fmt.Sprintf("<Parameter><Name>%s</Name><Value>%s</Value></Parameter>", xmlEscape(name), xmlEscape(value))
 		}
 		paramXML += "</Data>"
 	}

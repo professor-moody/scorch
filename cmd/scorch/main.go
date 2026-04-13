@@ -309,9 +309,10 @@ func debugf(opts *CommonOpts, format string, args ...interface{}) {
 	}
 }
 
-// createContext creates a context with timeout
+// createContext creates a context with a generous overall deadline.
+// Individual HTTP request timeouts are handled by the HTTP client.
 func createContext(opts *CommonOpts) (context.Context, context.CancelFunc) {
-	return context.WithTimeout(context.Background(), opts.Timeout)
+	return context.WithTimeout(context.Background(), opts.Timeout*10)
 }
 
 // containsHelp checks if args contain help flag
@@ -345,7 +346,9 @@ func parseBoolFlag(args []string, flags ...string) (bool, []string) {
 	for i := 0; i < len(args); i++ {
 		for _, f := range flags {
 			if args[i] == f {
-				newArgs := append(args[:i], args[i+1:]...)
+				newArgs := make([]string, 0, len(args)-1)
+				newArgs = append(newArgs, args[:i]...)
+				newArgs = append(newArgs, args[i+1:]...)
 				return true, newArgs
 			}
 		}

@@ -8,6 +8,7 @@ import (
 	"encoding/xml"
 	"fmt"
 	"io"
+	"net/url"
 	"net/http"
 	"os"
 	"strings"
@@ -177,6 +178,14 @@ func (c *HTTPClient) doRequest(ctx context.Context, method, path string, body []
 	req, err := http.NewRequestWithContext(ctx, method, url, bodyReader)
 	if err != nil {
 		return nil, err
+	}
+	
+	// Set GetBody so NTLM transport can replay the body on auth retries
+	if body != nil {
+		bodyCopy := body
+		req.GetBody = func() (io.ReadCloser, error) {
+			return io.NopCloser(bytes.NewReader(bodyCopy)), nil
+		}
 	}
 	
 	// Set headers
@@ -454,7 +463,7 @@ func (c *HTTPClient) GetJobs(ctx context.Context, filter string) ([]Job, error) 
 	}
 
 	if filter != "" {
-		path += "?$filter=" + filter
+		path += "?$filter=" + url.QueryEscape(filter)
 	}
 
 	resp, err := c.doRequest(ctx, "GET", path, nil)

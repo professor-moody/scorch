@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"os/signal"
 	"strings"
 	"sync"
 	"time"
@@ -90,8 +91,17 @@ func runSpray(args []string) error {
 	printf(opts, "    Users: %d, Passwords: %d\n", len(users), len(passwords))
 	printf(opts, "    Threads: %d, Delay: %s\n", numThreads, delayDuration)
 
-	ctx, cancel := createContext(opts)
+	// Set up signal handling for graceful shutdown
+	ctx, cancel := context.WithCancel(context.Background())
+	sigChan := make(chan os.Signal, 1)
+	signal.Notify(sigChan, os.Interrupt)
+	go func() {
+		<-sigChan
+		printf(opts, "\n[!] Interrupt received, stopping spray...\n")
+		cancel()
+	}()
 	defer cancel()
+	defer signal.Stop(sigChan)
 
 	output, cleanup, err := getOutput(opts)
 	if err != nil {
@@ -99,21 +109,27 @@ func runSpray(args []string) error {
 	}
 	defer cleanup()
 
-	// Create work channel
+	// Create work channel with bounded buffer to avoid materializing entire queue
 	type work struct {
 		user string
 		pass string
 	}
-	workChan := make(chan work, len(users)*len(passwords))
+	workChan := make(chan work, numThreads*2)
 	resultChan := make(chan SprayResult, 100)
 
-	// Populate work
-	for _, p := range passwords {
-		for _, u := range users {
-			workChan <- work{user: u, pass: p}
+	// Producer goroutine feeds work incrementally
+	go func() {
+		defer close(workChan)
+		for _, p := range passwords {
+			for _, u := range users {
+				select {
+				case workChan <- work{user: u, pass: p}:
+				case <-ctx.Done():
+					return
+				}
+			}
 		}
-	}
-	close(workChan)
+	}()
 
 	// Start workers
 	var wg sync.WaitGroup
@@ -131,6 +147,12 @@ func runSpray(args []string) error {
 					return
 				}
 				stopMu.Unlock()
+
+				select {
+				case <-ctx.Done():
+					return
+				default:
+				}
 
 				result := tryAuth(ctx, opts, w.user, w.pass)
 				resultChan <- result

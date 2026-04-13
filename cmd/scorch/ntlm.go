@@ -5,6 +5,7 @@ import (
 	"crypto/hmac"
 	"crypto/md5"
 	"crypto/rand"
+	"encoding/base64"
 	"encoding/binary"
 	"encoding/hex"
 	"fmt"
@@ -487,97 +488,23 @@ func getFileTime() []byte {
 	return buf
 }
 
-// cloneRequest clones an HTTP request
+// cloneRequest clones an HTTP request, preserving the body for retries
 func cloneRequest(req *http.Request) *http.Request {
 	clone := req.Clone(req.Context())
-	if req.Body != nil && req.GetBody != nil {
-		clone.Body, _ = req.GetBody()
+	if req.Body != nil {
+		if req.GetBody != nil {
+			clone.Body, _ = req.GetBody()
+		}
 	}
 	return clone
 }
 
-// base64Encode encodes bytes to base64
+// base64Encode encodes bytes to standard base64
 func base64Encode(data []byte) string {
-	const base64Chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"
-
-	result := make([]byte, ((len(data)+2)/3)*4)
-	for i, j := 0, 0; i < len(data); i, j = i+3, j+4 {
-		var val uint32
-		val = uint32(data[i]) << 16
-		if i+1 < len(data) {
-			val |= uint32(data[i+1]) << 8
-		}
-		if i+2 < len(data) {
-			val |= uint32(data[i+2])
-		}
-
-		result[j] = base64Chars[(val>>18)&0x3F]
-		result[j+1] = base64Chars[(val>>12)&0x3F]
-
-		if i+1 < len(data) {
-			result[j+2] = base64Chars[(val>>6)&0x3F]
-		} else {
-			result[j+2] = '='
-		}
-
-		if i+2 < len(data) {
-			result[j+3] = base64Chars[val&0x3F]
-		} else {
-			result[j+3] = '='
-		}
-	}
-
-	return string(result)
+	return base64.StdEncoding.EncodeToString(data)
 }
 
-// base64Decode decodes base64 to bytes
+// base64Decode decodes standard base64 to bytes
 func base64Decode(s string) ([]byte, error) {
-	const base64Chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"
-
-	// Remove padding
-	s = strings.TrimRight(s, "=")
-
-	// Build decode table
-	decodeTable := make([]int, 256)
-	for i := range decodeTable {
-		decodeTable[i] = -1
-	}
-	for i, c := range base64Chars {
-		decodeTable[c] = i
-	}
-
-	result := make([]byte, len(s)*3/4)
-	j := 0
-
-	for i := 0; i < len(s); i += 4 {
-		var val uint32
-		for k := 0; k < 4 && i+k < len(s); k++ {
-			idx := decodeTable[s[i+k]]
-			if idx < 0 {
-				return nil, fmt.Errorf("invalid base64 character")
-			}
-			val = (val << 6) | uint32(idx)
-		}
-
-		// Pad with zeros if we don't have 4 characters
-		remaining := len(s) - i
-		if remaining < 4 {
-			val <<= uint(6 * (4 - remaining))
-		}
-
-		if j < len(result) {
-			result[j] = byte(val >> 16)
-			j++
-		}
-		if j < len(result) && remaining > 2 {
-			result[j] = byte(val >> 8)
-			j++
-		}
-		if j < len(result) && remaining > 3 {
-			result[j] = byte(val)
-			j++
-		}
-	}
-
-	return result[:j], nil
+	return base64.StdEncoding.DecodeString(s)
 }

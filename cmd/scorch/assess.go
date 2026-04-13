@@ -49,19 +49,27 @@ func runAssess(args []string) error {
 
 	printf(opts, "[*] Starting security assessment of %s\n", opts.Target)
 
+	// Shared HTTP client for all assessment checks (connection pooling)
+	assessClient := &http.Client{
+		Timeout: opts.Timeout,
+		Transport: &http.Transport{
+			TLSClientConfig: &tls.Config{InsecureSkipVerify: opts.SkipVerify},
+		},
+	}
+
 	result := &AssessmentResult{
 		Target:    opts.Target,
 		StartTime: time.Now(),
 	}
 
 	// Run all checks
-	checkAnonymousAccess(ctx, opts, result)
-	checkAuthMethods(ctx, opts, result)
+	checkAnonymousAccess(ctx, opts, assessClient, result)
+	checkAuthMethods(ctx, opts, assessClient, result)
 	checkTLS(ctx, opts, result)
-	checkNTLMRelay(ctx, opts, result)
-	checkInfoDisclosure(ctx, opts, result)
-	checkCORS(ctx, opts, result)
-	checkSwagger(ctx, opts, result)
+	checkNTLMRelay(ctx, opts, assessClient, result)
+	checkInfoDisclosure(ctx, opts, assessClient, result)
+	checkCORS(ctx, opts, assessClient, result)
+	checkSwagger(ctx, opts, assessClient, result)
 
 	result.EndTime = time.Now()
 
@@ -80,15 +88,8 @@ func runAssess(args []string) error {
 	return nil
 }
 
-func checkAnonymousAccess(ctx context.Context, opts *CommonOpts, result *AssessmentResult) {
+func checkAnonymousAccess(ctx context.Context, opts *CommonOpts, client *http.Client, result *AssessmentResult) {
 	debugf(opts, "Checking anonymous access")
-
-	client := &http.Client{
-		Timeout: opts.Timeout,
-		Transport: &http.Transport{
-			TLSClientConfig: &tls.Config{InsecureSkipVerify: opts.SkipVerify},
-		},
-	}
 
 	endpoints := []struct {
 		path string
@@ -123,15 +124,8 @@ func checkAnonymousAccess(ctx context.Context, opts *CommonOpts, result *Assessm
 	}
 }
 
-func checkAuthMethods(ctx context.Context, opts *CommonOpts, result *AssessmentResult) {
+func checkAuthMethods(ctx context.Context, opts *CommonOpts, client *http.Client, result *AssessmentResult) {
 	debugf(opts, "Checking authentication methods")
-
-	client := &http.Client{
-		Timeout: opts.Timeout,
-		Transport: &http.Transport{
-			TLSClientConfig: &tls.Config{InsecureSkipVerify: opts.SkipVerify},
-		},
-	}
 
 	url := opts.BaseURL() + "/Orchestrator2012/Orchestrator.svc/"
 	req, _ := http.NewRequestWithContext(ctx, "GET", url, nil)
@@ -224,18 +218,11 @@ func checkTLS(ctx context.Context, opts *CommonOpts, result *AssessmentResult) {
 	}
 }
 
-func checkNTLMRelay(ctx context.Context, opts *CommonOpts, result *AssessmentResult) {
+func checkNTLMRelay(ctx context.Context, opts *CommonOpts, client *http.Client, result *AssessmentResult) {
 	debugf(opts, "Checking NTLM relay attack surface")
 
 	if opts.TLS {
 		return // Relay much harder over HTTPS with proper certs
-	}
-
-	client := &http.Client{
-		Timeout: opts.Timeout,
-		Transport: &http.Transport{
-			TLSClientConfig: &tls.Config{InsecureSkipVerify: opts.SkipVerify},
-		},
 	}
 
 	url := opts.BaseURL() + "/Orchestrator2012/Orchestrator.svc/"
@@ -264,15 +251,8 @@ func checkNTLMRelay(ctx context.Context, opts *CommonOpts, result *AssessmentRes
 	}
 }
 
-func checkInfoDisclosure(ctx context.Context, opts *CommonOpts, result *AssessmentResult) {
+func checkInfoDisclosure(ctx context.Context, opts *CommonOpts, client *http.Client, result *AssessmentResult) {
 	debugf(opts, "Checking information disclosure")
-
-	client := &http.Client{
-		Timeout: opts.Timeout,
-		Transport: &http.Transport{
-			TLSClientConfig: &tls.Config{InsecureSkipVerify: opts.SkipVerify},
-		},
-	}
 
 	url := opts.BaseURL() + "/"
 	req, _ := http.NewRequestWithContext(ctx, "GET", url, nil)
@@ -306,15 +286,8 @@ func checkInfoDisclosure(ctx context.Context, opts *CommonOpts, result *Assessme
 	}
 }
 
-func checkCORS(ctx context.Context, opts *CommonOpts, result *AssessmentResult) {
+func checkCORS(ctx context.Context, opts *CommonOpts, client *http.Client, result *AssessmentResult) {
 	debugf(opts, "Checking CORS configuration")
-
-	client := &http.Client{
-		Timeout: opts.Timeout,
-		Transport: &http.Transport{
-			TLSClientConfig: &tls.Config{InsecureSkipVerify: opts.SkipVerify},
-		},
-	}
 
 	url := opts.BaseURL() + "/api/runbooks"
 	req, _ := http.NewRequestWithContext(ctx, "OPTIONS", url, nil)
@@ -346,15 +319,8 @@ func checkCORS(ctx context.Context, opts *CommonOpts, result *AssessmentResult) 
 	}
 }
 
-func checkSwagger(ctx context.Context, opts *CommonOpts, result *AssessmentResult) {
+func checkSwagger(ctx context.Context, opts *CommonOpts, client *http.Client, result *AssessmentResult) {
 	debugf(opts, "Checking Swagger exposure")
-
-	client := &http.Client{
-		Timeout: opts.Timeout,
-		Transport: &http.Transport{
-			TLSClientConfig: &tls.Config{InsecureSkipVerify: opts.SkipVerify},
-		},
-	}
 
 	endpoints := []string{"/swagger", "/swagger/index.html", "/api/swagger.json"}
 	for _, ep := range endpoints {

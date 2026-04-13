@@ -255,6 +255,7 @@ func scanPort(ctx context.Context, host string, port int, service string, timeou
 
 	// Check for TLS on common HTTPS ports by upgrading the existing connection
 	if port == 443 || port == 636 || port == 5986 {
+		defer conn.Close()
 		tlsConn := tls.Client(conn, &tls.Config{
 			InsecureSkipVerify: true,
 			ServerName:         host,

@@ -346,7 +346,7 @@ func extractVariables(ctx context.Context, db *sql.DB, decrypt bool) ([]Variable
 			continue
 		}
 
-		v.IsEncrypted = strings.Contains(rawValue, "~De/")
+		v.IsEncrypted = strings.Contains(rawValue, EncryptedPrefix[1:])
 		if v.IsEncrypted {
 			v.EncryptedValue = rawValue
 		} else {
